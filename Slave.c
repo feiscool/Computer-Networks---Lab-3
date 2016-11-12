@@ -53,6 +53,8 @@ int main(int argc, char *argv[]) {
     uint8_t toSend_checksum;
     char toSend_message[64];
     
+    char nextSlavePort[100];
+    
     // Packed struct that will be sent as the data in a packet. A packed struct
     // is used as it won't contain any "padding" added by the compiler
     struct packed_request {
@@ -200,7 +202,7 @@ int main(int argc, char *argv[]) {
     // Display the contents of the response packet
     printf("Slave: GID of Master = %d \n", received_GID);
     printf("Slave: My RID = %d \n", myRID);
-    printf("Slave: Next Slave's IP Address = %s", nextSlaveIP_String);
+    printf("Slave: Next Slave's IP Address = %s \n", nextSlaveIP_String);
     
     /*
      * END: Receive Response
@@ -219,10 +221,12 @@ int main(int argc, char *argv[]) {
     hints.ai_family = AF_UNSPEC;		// No preference for IPv4 or IPv6
     hints.ai_socktype = SOCK_DGRAM;		// We're using UDP!
     
+    sprintf(nextSlavePort, "%d", (10010 + (received_GID * 5) + (myRID - 1)));
+    
     // Creates a linked list of addrinfo structs, which are pointed to by servinfo. These
     // structs contain the address information for the server that we are connecting to
-    if ((rv = getaddrinfo(argv[1], argv[2], &hints, &servinfo)) != 0) {
-        fprintf(stderr, "Slave %d: Error - getaddrinfo() => %s \n", myRID, gai_strerror(rv));
+    if ((rv = getaddrinfo(nextSlaveIP_String, nextSlavePort, &hints, &servinfo)) != 0) {
+        fprintf(stderr, "Slave: Error - getaddrinfo() => %s \n", gai_strerror(rv));
         return 1;
     }
     
@@ -234,7 +238,7 @@ int main(int argc, char *argv[]) {
         // If the addrinfo node is valid, create a socket
         if ((sockfd = socket(p -> ai_family, p -> ai_socktype,
                              p -> ai_protocol)) == -1) {
-            perror("Slave %d: Error - socket() \n", myRID);
+            perror("Slave: Error - socket() \n");
             continue;
         }
         
@@ -244,7 +248,7 @@ int main(int argc, char *argv[]) {
     // If 'p' is NULL at this point, then the entire linked list was iterated over and
     // no addrinfo nodes were able to create a socket and connect to the host
     if (p == NULL) {
-        fprintf(stderr, "Slave %d: Error - failed to connect \n", myRID);
+        fprintf(stderr, "Slave: Error - failed to connect \n");
         return 2;
     }
     
@@ -258,7 +262,7 @@ int main(int argc, char *argv[]) {
     
     while (1) {
         
-        printf("\nSlave %d: messages can now be sent along the ring \n", myRID);
+        printf("Slave %d: Messages can now be sent along the ring \n", myRID);
         
         printf("Slave %d: Enter the Ring ID of the destination slave: ", myRID);
         scanf("%d", &toSend_destination_RID);
