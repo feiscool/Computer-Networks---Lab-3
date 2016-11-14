@@ -26,7 +26,7 @@ uint8_t master_GID;
 uint16_t magicNumber_BigE;
 uint32_t nextSlaveIP;
 char nextSlaveIP_String[INET_ADDRSTRLEN];
-int UDP_socketForSending;
+int UDP_socketForSending;	// Socket file descriptor for sending over UDP
 
 
 // Get sockaddr, IPv4 or IPv6
@@ -40,7 +40,7 @@ void* get_in_addr(struct sockaddr *sa) {
 }
 
 
-void* sendUserMessage(void * blank) {
+void* sendUserMessage(void* blank) {
     
     // Variables to be sent for the messaging service
     uint8_t toSend_TtL;
@@ -77,6 +77,12 @@ void* sendUserMessage(void * blank) {
         if ((strlen(toSend_message) > 0) && (toSend_message[strlen(toSend_message) - 1] == '\n')) {
             toSend_message[strlen(toSend_message) - 1] = '\0';
         }
+        
+        // 
+        //
+        //	COMPUTE CHECKSUM HERE!
+        //
+        //
 
         // Construct the packet to be sent
         struct packed_message message_packet;
