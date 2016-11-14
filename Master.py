@@ -6,8 +6,10 @@ import binascii
 from threading import Thread, Lock
 import time
 
-previousNextSlaveIP = 0;
+previousNextSlaveIP = 0; #i think this is myIPaddress from before. needs to be tested
 mutex = Lock()
+socket_receiveAndForward = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+portNum = int(sys.argv[1])
 
 #setting up token ring
 def handleJoinRequests():
@@ -84,20 +86,18 @@ def handleJoinRequests():
 #get user input and send it
 #loop until receive input then send it out to nextSlaveIP.
 def receivePacketAndForward():
-    # Create a UDP socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    portNum = int(sys.argv[1])
-
+    #create global UDP socket
+    global socket_receiveAndForward
     # Bind the socket to the port
     server_address = ('', portNum)
     print "server_address", server_address
-    sock.bind(server_address)
+    socket_receiveAndForward.bind(server_address)
 
     #loop until a message is received, then send it to nextSlaveIP
     while True:
         #Wait for a packet to arrive via UDP
         print ("Master- receiveandForward: Calling recvfrom()...")
-        data, address = sock.recvfrom(1024)
+        data, address = socket_receiveAndForward.recvfrom(1024)
         print "Master: Address:\n", address
         print "Master: Data from packet:\n", data
         dataCharArray = list(binascii.hexlify(data))
@@ -116,23 +116,40 @@ def receivePacketAndForward():
             self.send(packet) #not defined yet
 
 #listen for a packet and possibly sending it
-#When a message is received (use the recv() function)
-#it must check the destination ring ID.
+#When a message is received, it must check the destination ring ID.
 #If the RID is 0, the thread should display the message.
 #If not, then the packet should be sent to nextSlaveIP.
 def sendUserMessage(packet):
-    pass
+    #check the RID by unpacking the packet
+
+    #Send the new packet
+     send(packet)
 
 def send(packet):
-        # Create a UDP socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        portNum = int(sys.argv[1])
+    socket_send
+     if (nextSlaveIP == previousNextSlaveIP):
+         socket_receiveAndForward.sendto(packet, nextSlaveIP)
+     elif (previousNextSlaveIP == 0):
+        #Make a new UDP socket using nextSlaveIP
+        socket_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        #Send “Packet” using the new socket
+        sent = socket_send.sendto(packet, nextSlaveIP)
+
+     else:
+          #Close the old UDP socket
+          socket_receiveAndForward.close()
+          #Make a new UDP socket using nextSlaveIP
+          #this socket does not have to be gloabl
+          socket_send_to_nodes = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          #Send “Packet” using the new socket
+          socket_send_to_nodes.sendto(packet, nextSlaveIP)
+     previousNextSlaveIP = nextSlaveIP
 
 
 thread_handleJoinRequests = Thread(name='handleJoinRequests', target=handleJoinRequests)
 thread_receivePacketAndForward = Thread(name='receivePacketAndForward', target=receivePacketAndForward)
-#thread_sendUserMessage = threading.Thread(name='sendUserMessage', target=sendUserMessage)
+thread_sendUserMessage = threading.Thread(name='sendUserMessage', target=sendUserMessage)
 
 thread_handleJoinRequests.start()
 thread_receivePacketAndForward.start()
-#thread_sendUserMessage.start()
+thread_sendUserMessage.start()
