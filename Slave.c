@@ -14,21 +14,23 @@
 #include <netdb.h>
 #include <pthread.h>
 
-#define MAXDATASIZE 100 // Maximum number of bytes we can get at once
+#define MAXDATASIZE 100 // Maximum number of bytes that can be received at once
 
 // Constants
 const uint8_t GID = 1;
 const uint16_t magicNumber = 0x1234;
 
-// Global variables 
-uint8_t myRID = -1;
+// Global variables
+uint8_t myRID;
+uint8_t master_GID;
 uint16_t magicNumber_BigE;
-uint32_t nextSlaveIP = -1;
+uint32_t nextSlaveIP;
 char nextSlaveIP_String[INET_ADDRSTRLEN];
+int UDP_socketForSending;
 
 
 // Get sockaddr, IPv4 or IPv6
-void *get_in_addr(struct sockaddr *sa) {
+void* get_in_addr(struct sockaddr *sa) {
     
     if (sa->sa_family == AF_INET) {
         return &(((struct sockaddr_in*)sa)->sin_addr);
@@ -38,41 +40,58 @@ void *get_in_addr(struct sockaddr *sa) {
 }
 
 
-void sendUserMessage() {
-
-	// Networking setup variables
-    int sockfd, numbytes, rv, masterPortNumber;
-    char buffer[MAXDATASIZE];
-    struct addrinfo hints, *servinfo, *p;	// "hints" is a struct of the addrinfo type
-    char s[INET6_ADDRSTRLEN];
-
-	// Variables to be sent for the messaging service
+void* sendUserMessage(void * blank) {
+    
+    // Variables to be sent for the messaging service
     uint8_t toSend_TtL;
     uint8_t toSend_destination_RID;
     uint8_t toSend_checksum;
     char toSend_message[64];
-
-	while (1) {
+    
+    // Packed struct that will be sent as the data in a packet. A packed struct
+    // is used as it won't contain any "padding" added by the compiler
+    struct packed_message {
+        uint8_t GID_Struct;
+        uint16_t magicNumber_Struct;
+        uint8_t TtL_Struct;
+        uint8_t RID_Dest_Struct;
+        uint8_t RID_Source_Struct;
+        char message_Struct[64];
+        uint8_t checksum_Struct;
+    } __attribute__((__packed__));
+    
+    while (1) {
         
-    	printf("Slave %d: Messages can now be sent along the ring \n", myRID);
-        
-        printf("Slave %d: Enter the Ring ID of the destination slave: ", myRID);
+        printf("Slave %d: Messages can now be sent along the ring \n", myRID);
+        printf("Slave %d: Enter the Ring ID of a node to send a message to: ", myRID);
         scanf("%d", &toSend_destination_RID);
         
         // getchar() is needed to eliminate the newline character left in the
         // input buffer from the user pressing the return key to enter the ring ID
         getchar();
         
-        printf("Slave %d: Enter the message to send: ", myRID);
+        printf("Slave %d: Enter a message to send: ", myRID);
         fgets(toSend_message, 64, stdin);
         
         // Remove the trailing newline character from the toSend_message string
         if ((strlen(toSend_message) > 0) && (toSend_message[strlen(toSend_message) - 1] == '\n')) {
             toSend_message[strlen(toSend_message) - 1] = '\0';
         }
+
+        // Construct the packet to be sent
+        struct packed_message message_packet;
         
-        // Construct the packet to be sent 
-        // struct packed_message message_packet = {GID, magicNumber_BigE};
+        message_packet.GID_Struct = GID;
+        message_packet.magicNumber_Struct = magicNumber_BigE;
+        message_packet.TtL_Struct = toSend_TtL;
+        message_packet.RID_Dest_Struct = toSend_destination_RID;
+        message_packet.RID_Source_Struct = myRID;
+        strcpy(message_packet.message_Struct, toSend_message);	// Needed for char array
+        message_packet.checksum_Struct = toSend_checksum;
+        
+        
+        
+        printf("Slave %d: Message sent to node with Ring ID %d \n", myRID, toSend_destination_RID);
     }
 }
 
@@ -91,27 +110,19 @@ int main(int argc, char *argv[]) {
     uint32_t received_nextSlaveIP;
     uint8_t received_myRID;
     
-    char nextSlavePort[100];
-    
-    // Threading variables 
+    // Threading variables
     pthread_t sendMessageThread;
     pthread_t receiveForwardThread;
+    
+    // Miscellaneous variables
+    int* blank = 0;
+    char nextSlavePort[100];
     
     // Packed struct that will be sent as the data in a packet. A packed struct
     // is used as it won't contain any "padding" added by the compiler
     struct packed_request {
         uint8_t GID_Struct;
         uint16_t magicNumber_Struct;
-    } __attribute__((__packed__));
-    
-    struct packed_message {
-        uint8_t GID_Struct;
-        uint16_t magicNumber_Struct;
-        uint8_t TtL_Struct;
-        uint8_t RID_Dest_Struct;
-        uint8_t RID_Source_Struct;
-        char message_Struct[64];
-        uint8_t checksum_Struct;
     } __attribute__((__packed__));
     
     magicNumber_BigE = htons(magicNumber);		// Convert to Big Endian
@@ -230,7 +241,9 @@ int main(int argc, char *argv[]) {
     received_myRID = *(uint8_t *)(buffer + 3);
     received_nextSlaveIP = *(uint32_t *)(buffer + 4);
     
+    // Assign local variables to global variables (for the threads)
     myRID = received_myRID;
+    master_GID = received_GID;
     
     // Convert the received values larger than a byte to host byte order (Little Endian)
     received_MagicNumber = ntohs(received_MagicNumber);
@@ -258,16 +271,16 @@ int main(int argc, char *argv[]) {
     close(sockfd);				// Close the socket that we were using
     
     /*
-     * BEGIN: Establish UDP socket
+     * BEGIN: Establish UDP socket for sending 
      */
     
-    // Begin to setup the UDP socket. Note that variables from previously
-    // are being reused since the TCP socket is closed
+    // Note that the variables from the setup of the TCP socket are being reused. This 
+    // is okay since the socket was closed 
     memset(&hints, 0, sizeof hints);	// Ensure the struct is empty
     hints.ai_family = AF_UNSPEC;		// No preference for IPv4 or IPv6
     hints.ai_socktype = SOCK_DGRAM;		// We're using UDP!
     
-    sprintf(nextSlavePort, "%d", (10010 + (received_GID * 5) + (myRID - 1)));
+    sprintf(nextSlavePort, "%d", (10010 + (master_GID * 5) + (myRID - 1)));
     
     // Creates a linked list of addrinfo structs, which are pointed to by servinfo. These
     // structs contain the address information for the server that we are connecting to
@@ -282,7 +295,7 @@ int main(int argc, char *argv[]) {
     for(p = servinfo; p != NULL; p = p -> ai_next) {
         
         // If the addrinfo node is valid, create a socket
-        if ((sockfd = socket(p -> ai_family, p -> ai_socktype,
+        if ((UDP_socketForSending = socket(p -> ai_family, p -> ai_socktype,
                              p -> ai_protocol)) == -1) {
             perror("Slave: Error - socket() \n");
             continue;
@@ -299,13 +312,18 @@ int main(int argc, char *argv[]) {
     }
     
     /*
-     * END: Establish UDP socket
+     * END: Establish UDP socket for sending 
      */
     
-	if (pthread_create(&sendMessageThread, NULL, sendUserMessage, void) != 0) {
+    // Create the thread that allows the user to send messages to other nodes
+    if (pthread_create(&sendMessageThread, NULL, sendUserMessage, (void*)blank) != 0) {
         fprintf(stderr, "Slave: Error - threading failure \n");
         return 1;
     }
+    
+    // Wait for the threads to end (they won't, since they are infinite loops), otherwise
+    // they will end once "return 0" is reached below
+    pthread_join(sendMessageThread, NULL);
     
     return 0;
 }
