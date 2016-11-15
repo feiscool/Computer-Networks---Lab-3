@@ -14,7 +14,7 @@
 #include <netdb.h>
 #include <pthread.h>
 
-#define MAXDATASIZE 100 // Maximum number of bytes that can be received at once
+#define MAXDATASIZE 71 // Maximum number of bytes that can be received at once
 
 // Constants
 const uint8_t GID = 1;
@@ -28,7 +28,7 @@ uint32_t nextSlaveIP;
 char nextSlaveIP_String[INET_ADDRSTRLEN];
 
 // Networking setup variables
-int sockfd, socketForSending, numbytes, rv, masterPortNumber, myPort;
+int sockfd, socketForSending, numbytes, rv, masterPortNumber;
 char buffer[MAXDATASIZE];
 struct addrinfo hints, *servinfo, *p;	// "hints" is a struct of the addrinfo type
 char s[INET6_ADDRSTRLEN];
@@ -55,7 +55,7 @@ void* sendUserMessage(void* blank) {
     
     int numbytes;
     
-    toSend_TtL = 5;		// Correct or not? 
+    toSend_TtL = 5;		// Correct or not?
     
     // Packed struct that will be sent as the data in a packet. A packed struct
     // is used as it won't contain any "padding" added by the compiler
@@ -70,8 +70,8 @@ void* sendUserMessage(void* blank) {
     } __attribute__((__packed__));
     
     while (1) {
-    
-    	toSend_checksum = 0;	// Set to 0 initially for checksum calculation 
+        
+        toSend_checksum = 0;	// Set to 0 initially for checksum calculation
         
         printf("Slave %d: Messages can now be sent along the ring \n", myRID);
         printf("Slave %d: Enter the Ring ID of a node to send a message to: ", myRID);
@@ -88,13 +88,13 @@ void* sendUserMessage(void* blank) {
         if ((strlen(toSend_message) > 0) && (toSend_message[strlen(toSend_message) - 1] == '\n')) {
             toSend_message[strlen(toSend_message) - 1] = '\0';
         }
-
+        
         // Construct the packet to be sent
         struct packed_message packet;
         
         packet.GID_Struct = GID;
         packet.magicNumber_Struct = magicNumber_BigE;
-		packet.TtL_Struct = toSend_TtL;
+        packet.TtL_Struct = toSend_TtL;
         packet.RID_Dest_Struct = toSend_destination_RID;
         packet.RID_Source_Struct = myRID;
         strcpy(packet.message_Struct, toSend_message);	// Needed for char array
@@ -102,16 +102,16 @@ void* sendUserMessage(void* blank) {
         
         //
         //
-        //	Call checksum function and insert the result into the packet here! 
+        //	Call checksum function and insert the result into the packet here!
         //
         //
         
         // Send the packet to nextSlaveIP
         if ((numbytes = sendto(socketForSending, (void *)&packet, sizeof(packet), 0,
-				 p -> ai_addr, p -> ai_addrlen)) == -1) {
-			perror("Slave: Error - sendto() \n");
-			exit(1);
-		}
+                               p -> ai_addr, p -> ai_addrlen)) == -1) {
+            perror("Slave: Error - sendto() \n");
+            exit(1);
+        }
         
         printf("Slave %d: Message sent to node with Ring ID %d \n", myRID, toSend_destination_RID);
     }
@@ -119,56 +119,131 @@ void* sendUserMessage(void* blank) {
 
 
 void* receiveAndForward(void* blank) {
-
-	// Begin to establish a socket for receiving 
-	memset(&hints, 0, sizeof hints);	// Ensure the struct is empty
+    
+    // Setup variables
+    char myPort[100];
+    
+    // Variables describing the sender
+    struct sockaddr_storage their_addr;
+    socklen_t addr_len;
+    
+    // Variables to be received from the sender
+    uint8_t received_GID;
+    uint16_t received_magicNumber;
+    uint8_t received_TtL;
+    uint8_t received_RID_Dest;
+    uint8_t received_RID_Source;
+    char received_Message[64];
+    uint8_t received_Checksum;
+    
+    // Packed struct for forwarding received messages
+    struct packed_messageToForward {
+        char content[71];
+    } __attribute__((__packed__));
+    
+    // Begin to establish a socket for receiving
+    memset(&hints, 0, sizeof hints);	// Ensure the struct is empty
     hints.ai_family = AF_UNSPEC;		// No preference for IPv4 or IPv6
     hints.ai_socktype = SOCK_DGRAM;		// We're using UDP!
-	hints.ai_flags = AI_PASSIVE; 		// Use this node's IP address
-
-	// Define the port number for the node to receive data at
-	myPort = 10010 + (master_GID * 5) + myRID;		
-
-	// Get info about this node's address for establishing a socket 
-	if ((rv = getaddrinfo(NULL, myPort, &hints, &servinfo)) != 0) {
-		fprintf(stderr, "Slave: Error - getaddrinfo() => %s \n", gai_strerror(rv));
-		exit(1);
-	}
-
-	// Loop through the linked list pointed to by servinfo until an addrinfo node is
-    // found that can both create a socket and bind to a port. A loop is used as a host 
+    hints.ai_flags = AI_PASSIVE; 		// Use this node's IP address
+    
+    // Define the port number for this node to receive data at as a string
+    sprintf(myPort, "%d", (10010 + (master_GID * 5) + myRID));
+    
+    // Get info about this node's address for establishing a socket
+    if ((rv = getaddrinfo(NULL, myPort, &hints, &servinfo)) != 0) {
+        fprintf(stderr, "Slave: Error - getaddrinfo() => %s \n", gai_strerror(rv));
+        exit(1);
+    }
+    
+    // Loop through the linked list pointed to by servinfo until an addrinfo node is
+    // found that can both create a socket and bind to a port. A loop is used as a host
     // can have multiple addresses - not all may work
-	for(p = servinfo; p != NULL; p = p -> ai_next) {
-	
-		// Try to create a socket
-		if ((sockfd = socket(p -> ai_family, p -> ai_socktype,
-				p -> ai_protocol)) == -1) {
-			perror("Slave: Error - socket() \n");
-			continue;	// Try again, if possible 
-		}
-
-		// Try to bind the socket to a port
-		if (bind(sockfd, p -> ai_addr, p -> ai_addrlen) == -1) {
-			close(sockfd);
-			perror("Slave: Error - bind() \n");
-			continue;	// Try again, if possible 
-		}
-
-		break;	// Success, so stop here
-	}
-
-	// If 'p' is NULL at this point, then the entire linked list was iterated over and
+    for(p = servinfo; p != NULL; p = p -> ai_next) {
+        
+        // Try to create a socket
+        if ((sockfd = socket(p -> ai_family, p -> ai_socktype,
+                             p -> ai_protocol)) == -1) {
+            perror("Slave: Error - socket() \n");
+            continue;	// Try again, if possible
+        }
+        
+        // Try to bind the socket to a port
+        if (bind(sockfd, p -> ai_addr, p -> ai_addrlen) == -1) {
+            close(sockfd);
+            perror("Slave: Error - bind() \n");
+            continue;	// Try again, if possible
+        }
+        
+        break;	// Success
+    }
+    
+    // If 'p' is NULL at this point, then the entire linked list was iterated over and
     // no addrinfo nodes were able to create a socket and bind to a port
-	if (p == NULL) {
-		fprintf(stderr, "Slave: Error - failed to establish a socket and bind to a port \n");
-		exit(1);
-	}
-
-	freeaddrinfo(servinfo);
-
-	while (1) {
-	
-	}
+    if (p == NULL) {
+        fprintf(stderr, "Slave: Error - failed to establish a socket and bind to a port \n");
+        exit(1);
+    }
+    
+    freeaddrinfo(servinfo);
+    
+    addr_len = sizeof their_addr;
+    
+    while (1) {
+        
+        // Clear the buffer from any previous entries
+        memset(buffer, 0, (sizeof(char) * MAXDATASIZE));
+        
+        // Receive the data
+        if ((numbytes = recvfrom(sockfd, buffer, (MAXDATASIZE - 1), 0,
+                                 (struct sockaddr *)&their_addr, &addr_len)) == -1) {
+            perror("Slave: Error - recvfrom() \n");
+            exit(1);
+        }
+        
+        buffer[numbytes] = '\0';	// Specify the end of the data within the buffer
+        
+        // Extract the data from the buffer into variables
+        received_GID = *(uint8_t *)(buffer);
+        received_magicNumber = *(uint16_t *)(buffer + 1);
+        received_TtL = *(uint8_t *)(buffer + 3);
+        received_RID_Dest = *(uint8_t *)(buffer + 4);
+        received_RID_Source = *(uint8_t *)(buffer + 5);
+        memcpy(received_Message, &buffer[6], 64);	// Needed to get the string (char array)
+        received_Checksum = *(uint8_t *)(buffer + 70);
+        
+        // If the packet's destination was this node, then display it
+        if (myRID == received_RID_Dest) {
+            
+            // Convert the received values larger than a byte to host byte
+            // order (Little Endian)
+            received_magicNumber = ntohs(received_magicNumber);
+            
+            // Ensure that the magic number sent from the Master is valid
+            if (received_magicNumber != magicNumber) {
+                perror("Slave: Error - invalid magic number received \n");
+                // exit(1);
+            }
+        }
+        
+        // Otherwise, forward the packet onward
+        else {
+            
+            struct packed_messageToForward packet;
+            
+            // Copy the received content into the packet to forward
+            strcpy(packet.content, buffer);
+            
+            // Send the packet to nextSlaveIP
+            if ((numbytes = sendto(socketForSending, (void *)&packet, sizeof(packet), 0,
+                                   p -> ai_addr, p -> ai_addrlen)) == -1) {
+                perror("Slave: Error - sendto() \n");
+                exit(1);
+            }
+            
+            printf("Slave %d: Received message forwarded to the next node in the ring \n", myRID);
+        }
+    }
 }
 
 
@@ -176,7 +251,7 @@ int main(int argc, char *argv[]) {
     
     // Variables to be received from the master
     uint8_t received_GID;
-    uint16_t received_MagicNumber;
+    uint16_t received_magicNumber;
     uint32_t received_nextSlaveIP;
     uint8_t received_myRID;
     
@@ -307,7 +382,7 @@ int main(int argc, char *argv[]) {
     // is to begin to be parsed from. It will stop automatically based on the size of
     // the type that is specified
     received_GID = *(uint8_t *)(buffer);
-    received_MagicNumber = *(uint16_t *)(buffer + 1);
+    received_magicNumber = *(uint16_t *)(buffer + 1);
     received_myRID = *(uint8_t *)(buffer + 3);
     received_nextSlaveIP = *(uint32_t *)(buffer + 4);
     
@@ -316,14 +391,14 @@ int main(int argc, char *argv[]) {
     master_GID = received_GID;
     
     // Convert the received values larger than a byte to host byte order (Little Endian)
-    received_MagicNumber = ntohs(received_MagicNumber);
+    received_magicNumber = ntohs(received_magicNumber);
     nextSlaveIP = ntohl(received_nextSlaveIP);
     
     // Convert the received next slave's IP Address to human readable form
     inet_ntop(AF_INET, &(nextSlaveIP), nextSlaveIP_String, INET_ADDRSTRLEN);
     
     // Ensure that the magic number sent from the Master is valid
-    if (received_MagicNumber != magicNumber) {
+    if (received_magicNumber != magicNumber) {
         perror("Slave: Error - invalid magic number received from Master \n");
         // exit(1);
     }
@@ -341,11 +416,11 @@ int main(int argc, char *argv[]) {
     close(sockfd);				// Close the socket that we were using
     
     /*
-     * BEGIN: Establish UDP socket for sending 
+     * BEGIN: Establish UDP socket for sending
      */
     
-    // Note that the variables from the setup of the TCP socket are being reused. This 
-    // is okay since the socket was closed 
+    // Note that the variables from the setup of the TCP socket are being reused. This
+    // is okay since the socket was closed
     memset(&hints, 0, sizeof hints);	// Ensure the struct is empty
     hints.ai_family = AF_UNSPEC;		// No preference for IPv4 or IPv6
     hints.ai_socktype = SOCK_DGRAM;		// We're using UDP!
@@ -360,13 +435,13 @@ int main(int argc, char *argv[]) {
     }
     
     // Loop through the linked list pointed to by servinfo until an addrinfo node is
-    // found that can create a socket. A loop is used as a host can have multiple 
+    // found that can create a socket. A loop is used as a host can have multiple
     // addresses - not all may work
     for(p = servinfo; p != NULL; p = p -> ai_next) {
         
         // If the addrinfo node is valid, create a socket
         if ((socketForSending = socket(p -> ai_family, p -> ai_socktype,
-                             p -> ai_protocol)) == -1) {
+                                       p -> ai_protocol)) == -1) {
             perror("Slave: Error - socket() \n");
             continue;
         }
@@ -384,7 +459,7 @@ int main(int argc, char *argv[]) {
     freeaddrinfo(servinfo);		// Frees up the linked list pointed to by servinfo
     
     /*
-     * END: Establish UDP socket for sending 
+     * END: Establish UDP socket for sending
      */
     
     // Create the thread that allows the user to send messages to other nodes
@@ -393,7 +468,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // Create the thread that receives and forwards (if necessary) messages 
+    // Create the thread that receives and forwards (if necessary) messages
     if (pthread_create(&receiveForwardThread, NULL, receiveAndForward, (void*)blank) != 0) {
         fprintf(stderr, "Slave: Error - thread creation failure (type 2) \n");
         return 1;
