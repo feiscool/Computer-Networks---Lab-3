@@ -28,7 +28,7 @@ uint32_t nextSlaveIP;
 char nextSlaveIP_String[INET_ADDRSTRLEN];
 
 // Networking setup variables
-int sockfd, socketForSending, numbytes, rv, masterPortNumber;
+int sockfd, socketForSending, numbytes, rv, masterPortNumber, myPort;
 char buffer[MAXDATASIZE];
 struct addrinfo hints, *servinfo, *p;	// "hints" is a struct of the addrinfo type
 char s[INET6_ADDRSTRLEN];
@@ -70,6 +70,8 @@ void* sendUserMessage(void* blank) {
     } __attribute__((__packed__));
     
     while (1) {
+    
+    	toSend_checksum = 0;	// Set to 0 initially for checksum calculation 
         
         printf("Slave %d: Messages can now be sent along the ring \n", myRID);
         printf("Slave %d: Enter the Ring ID of a node to send a message to: ", myRID);
@@ -86,12 +88,6 @@ void* sendUserMessage(void* blank) {
         if ((strlen(toSend_message) > 0) && (toSend_message[strlen(toSend_message) - 1] == '\n')) {
             toSend_message[strlen(toSend_message) - 1] = '\0';
         }
-        
-        // 
-        //
-        //	COMPUTE CHECKSUM HERE!
-        //
-        //
 
         // Construct the packet to be sent
         struct packed_message packet;
@@ -104,6 +100,12 @@ void* sendUserMessage(void* blank) {
         strcpy(packet.message_Struct, toSend_message);	// Needed for char array
         packet.checksum_Struct = toSend_checksum;
         
+        //
+        //
+        //	Call checksum function and insert the result into the packet here! 
+        //
+        //
+        
         // Send the packet to nextSlaveIP
         if ((numbytes = sendto(socketForSending, (void *)&packet, sizeof(packet), 0,
 				 p -> ai_addr, p -> ai_addrlen)) == -1) {
@@ -113,6 +115,60 @@ void* sendUserMessage(void* blank) {
         
         printf("Slave %d: Message sent to node with Ring ID %d \n", myRID, toSend_destination_RID);
     }
+}
+
+
+void* receiveAndForward(void* blank) {
+
+	// Begin to establish a socket for receiving 
+	memset(&hints, 0, sizeof hints);	// Ensure the struct is empty
+    hints.ai_family = AF_UNSPEC;		// No preference for IPv4 or IPv6
+    hints.ai_socktype = SOCK_DGRAM;		// We're using UDP!
+	hints.ai_flags = AI_PASSIVE; 		// Use this node's IP address
+
+	// Define the port number for the node to receive data at
+	myPort = 10010 + (master_GID * 5) + myRID;		
+
+	// Get info about this node's address for establishing a socket 
+	if ((rv = getaddrinfo(NULL, myPort, &hints, &servinfo)) != 0) {
+		fprintf(stderr, "Slave: Error - getaddrinfo() => %s \n", gai_strerror(rv));
+		exit(1);
+	}
+
+	// Loop through the linked list pointed to by servinfo until an addrinfo node is
+    // found that can both create a socket and bind to a port. A loop is used as a host 
+    // can have multiple addresses - not all may work
+	for(p = servinfo; p != NULL; p = p -> ai_next) {
+	
+		// Try to create a socket
+		if ((sockfd = socket(p -> ai_family, p -> ai_socktype,
+				p -> ai_protocol)) == -1) {
+			perror("Slave: Error - socket() \n");
+			continue;	// Try again, if possible 
+		}
+
+		// Try to bind the socket to a port
+		if (bind(sockfd, p -> ai_addr, p -> ai_addrlen) == -1) {
+			close(sockfd);
+			perror("Slave: Error - bind() \n");
+			continue;	// Try again, if possible 
+		}
+
+		break;	// Success, so stop here
+	}
+
+	// If 'p' is NULL at this point, then the entire linked list was iterated over and
+    // no addrinfo nodes were able to create a socket and bind to a port
+	if (p == NULL) {
+		fprintf(stderr, "Slave: Error - failed to establish a socket and bind to a port \n");
+		exit(1);
+	}
+
+	freeaddrinfo(servinfo);
+
+	while (1) {
+	
+	}
 }
 
 
@@ -199,7 +255,7 @@ int main(int argc, char *argv[]) {
     // If 'p' is NULL at this point, then the entire linked list was iterated over and
     // no addrinfo nodes were able to create a socket and connect to the host
     if (p == NULL) {
-        fprintf(stderr, "Slave: Error - failed to connect \n");
+        fprintf(stderr, "Slave: Error - failed to establish a socket and connect \n");
         return 2;
     }
     
@@ -304,8 +360,8 @@ int main(int argc, char *argv[]) {
     }
     
     // Loop through the linked list pointed to by servinfo until an addrinfo node is
-    // found that can both create a socket and establish a connection. A loop is used
-    // as a host can have multiple addresses - not all may work
+    // found that can create a socket. A loop is used as a host can have multiple 
+    // addresses - not all may work
     for(p = servinfo; p != NULL; p = p -> ai_next) {
         
         // If the addrinfo node is valid, create a socket
@@ -319,11 +375,13 @@ int main(int argc, char *argv[]) {
     }
     
     // If 'p' is NULL at this point, then the entire linked list was iterated over and
-    // no addrinfo nodes were able to create a socket and connect to the host
+    // no addrinfo nodes were able to create a socket
     if (p == NULL) {
-        fprintf(stderr, "Slave: Error - failed to connect \n");
+        fprintf(stderr, "Slave: Error - failed to establish a socket \n");
         return 1;
     }
+    
+    freeaddrinfo(servinfo);		// Frees up the linked list pointed to by servinfo
     
     /*
      * END: Establish UDP socket for sending 
@@ -331,13 +389,20 @@ int main(int argc, char *argv[]) {
     
     // Create the thread that allows the user to send messages to other nodes
     if (pthread_create(&sendMessageThread, NULL, sendUserMessage, (void*)blank) != 0) {
-        fprintf(stderr, "Slave: Error - threading failure \n");
+        fprintf(stderr, "Slave: Error - thread creation failure (type 1) \n");
+        return 1;
+    }
+    
+    // Create the thread that receives and forwards (if necessary) messages 
+    if (pthread_create(&receiveForwardThread, NULL, receiveAndForward, (void*)blank) != 0) {
+        fprintf(stderr, "Slave: Error - thread creation failure (type 2) \n");
         return 1;
     }
     
     // Wait for the threads to end (they won't, since they are infinite loops), otherwise
     // they will end once "return 0" is reached below
     pthread_join(sendMessageThread, NULL);
+    pthread_join(receiveForwardThread, NULL);
     
     return 0;
 }
