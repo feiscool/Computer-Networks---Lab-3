@@ -26,7 +26,12 @@ uint8_t master_GID;
 uint16_t magicNumber_BigE;
 uint32_t nextSlaveIP;
 char nextSlaveIP_String[INET_ADDRSTRLEN];
-int UDP_socketForSending;	// Socket file descriptor for sending over UDP
+
+// Networking setup variables
+int sockfd, socketForSending, numbytes, rv, masterPortNumber;
+char buffer[MAXDATASIZE];
+struct addrinfo hints, *servinfo, *p;	// "hints" is a struct of the addrinfo type
+char s[INET6_ADDRSTRLEN];
 
 
 // Get sockaddr, IPv4 or IPv6
@@ -47,6 +52,10 @@ void* sendUserMessage(void* blank) {
     uint8_t toSend_destination_RID;
     uint8_t toSend_checksum;
     char toSend_message[64];
+    
+    int numbytes;
+    
+    toSend_TtL = 5;		// Correct or not? 
     
     // Packed struct that will be sent as the data in a packet. A packed struct
     // is used as it won't contain any "padding" added by the compiler
@@ -85,17 +94,22 @@ void* sendUserMessage(void* blank) {
         //
 
         // Construct the packet to be sent
-        struct packed_message message_packet;
+        struct packed_message packet;
         
-        message_packet.GID_Struct = GID;
-        message_packet.magicNumber_Struct = magicNumber_BigE;
-        message_packet.TtL_Struct = toSend_TtL;
-        message_packet.RID_Dest_Struct = toSend_destination_RID;
-        message_packet.RID_Source_Struct = myRID;
-        strcpy(message_packet.message_Struct, toSend_message);	// Needed for char array
-        message_packet.checksum_Struct = toSend_checksum;
+        packet.GID_Struct = GID;
+        packet.magicNumber_Struct = magicNumber_BigE;
+		packet.TtL_Struct = toSend_TtL;
+        packet.RID_Dest_Struct = toSend_destination_RID;
+        packet.RID_Source_Struct = myRID;
+        strcpy(packet.message_Struct, toSend_message);	// Needed for char array
+        packet.checksum_Struct = toSend_checksum;
         
-        
+        // Send the packet to nextSlaveIP
+        if ((numbytes = sendto(socketForSending, (void *)&packet, sizeof(packet), 0,
+				 p -> ai_addr, p -> ai_addrlen)) == -1) {
+			perror("Slave: Error - sendto() \n");
+			exit(1);
+		}
         
         printf("Slave %d: Message sent to node with Ring ID %d \n", myRID, toSend_destination_RID);
     }
@@ -103,12 +117,6 @@ void* sendUserMessage(void* blank) {
 
 
 int main(int argc, char *argv[]) {
-    
-    // Networking setup variables
-    int sockfd, numbytes, rv, masterPortNumber;
-    char buffer[MAXDATASIZE];
-    struct addrinfo hints, *servinfo, *p;	// "hints" is a struct of the addrinfo type
-    char s[INET6_ADDRSTRLEN];
     
     // Variables to be received from the master
     uint8_t received_GID;
@@ -301,7 +309,7 @@ int main(int argc, char *argv[]) {
     for(p = servinfo; p != NULL; p = p -> ai_next) {
         
         // If the addrinfo node is valid, create a socket
-        if ((UDP_socketForSending = socket(p -> ai_family, p -> ai_socktype,
+        if ((socketForSending = socket(p -> ai_family, p -> ai_socktype,
                              p -> ai_protocol)) == -1) {
             perror("Slave: Error - socket() \n");
             continue;
