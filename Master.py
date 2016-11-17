@@ -123,27 +123,27 @@ def sendUserMessage(packet):
     #check the RID by unpacking the packet
 
     #Send the new packet
-     send(packet)
+    send(packet)
 
 def send(packet):
     socket_send
-     if (nextSlaveIP == previousNextSlaveIP):
-         socket_receiveAndForward.sendto(packet, nextSlaveIP)
-     elif (previousNextSlaveIP == 0):
+    if (nextSlaveIP == previousNextSlaveIP):
+        socket_receiveAndForward.sendto(packet, nextSlaveIP)
+    elif (previousNextSlaveIP == 0):
         #Make a new UDP socket using nextSlaveIP
         socket_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         #Send “Packet” using the new socket
         sent = socket_send.sendto(packet, nextSlaveIP)
 
-     else:
-          #Close the old UDP socket
-          socket_receiveAndForward.close()
-          #Make a new UDP socket using nextSlaveIP
-          #this socket does not have to be gloabl
-          socket_send_to_nodes = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-          #Send “Packet” using the new socket
-          socket_send_to_nodes.sendto(packet, nextSlaveIP)
-     previousNextSlaveIP = nextSlaveIP
+    else:
+        #Close the old UDP socket
+        socket_receiveAndForward.close()
+        #Make a new UDP socket using nextSlaveIP
+        #this socket does not have to be gloabl
+        socket_send_to_nodes = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        #Send “Packet” using the new socket
+        socket_send_to_nodes.sendto(packet, nextSlaveIP)
+    previousNextSlaveIP = nextSlaveIP
 
 
 thread_handleJoinRequests = Thread(name='handleJoinRequests', target=handleJoinRequests)
