@@ -1,32 +1,29 @@
-//===================================================== file = checksum.c =====
-//=  Program to compute 8-bit Internet checksum                              =
-//=============================================================================
-//=  Based on the C-code given in RFC 1071 (Computing the Internet  =
-//=            Checksum by R. Braden, D. Borman, and C. Partridge, 1988).     =
-//=  History:  KJC (8/25/00) - Genesis                                        =
-//=============================================================================
-//----- Type defines ----------------------------------------------------------
-typedef unsigned int8_t    byte;
-typedef unsigned int16_t   int16;  // 32-bit word is an int
+#include <stdint.h>
+#include <stdio.h>
 
-byte checksum(byte *buffer, int16 buff_len)
+unsigned char compute_checksum(const char *buf, unsigned size)
 {
-  register int16 chsksum = 0;
+	uint16_t sum = 0;
+	int i;
 
-  // Main summing loop
-  while(buff_len > 1)
-  {
-    chsksum = chsksum + *((byte *) buff_len)++;
-    count = count - 2;
-  }
+	/* Accumulate checksum */
+	for (i = 0; i < size - 1; i++)
+	{
+		sum += *(uint8_t *) &buf[i];
+    sum = (sum >> 8) + (sum & 0xFF);
+	}
+  sum += (sum >> 8);
+  unsigned char checksum = (~sum) & 0xFF;
 
-  // Add left-over byte, if any
-  if (count > 0)
-    chsksum = chsksum + *((byte *) buffer);
+  printf("\nAnswer = %d\n\n", checksum);
+	return checksum;
+}
 
-  // Fold 32-bit sum to 16 bits
-  while (chsksum>>8)
-    chsksum = (chsksum & 0xFF) + (chsksum >> 8);
-
-  return(~chsksum);
+void main(){
+  char arr[4];
+  arr[0] = 112;
+  arr[1] = 176;
+  arr[2] = 240;
+  arr[3] = 15;
+  compute_checksum(arr, 5);
 }
