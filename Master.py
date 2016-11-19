@@ -6,150 +6,206 @@ import binascii
 from threading import Thread, Lock
 import time
 
-previousNextSlaveIP = 0; #i think this is myIPaddress from before. needs to be tested
-mutex = Lock()
-socket_receiveAndForward = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+# Global variables
+previousNextSlaveIP = -1;
 portNum = int(sys.argv[1])
+myRID = 0
+myGID = 1
+slaveRID = 1
+nextSlaveIP = -1
+nextSlavePort = -1
+socket_UDP = -1
+magic_number = 0x1234
+mutex = Lock()
 
-#setting up token ring
+
+# Receive and handle requests from Slaves to join the ring
 def handleJoinRequests():
-    myRID = 0
-    slaveRID = 1
-    myGID = 1
-    magic_number = 0x1234
-    packed_clientIP = -1
 
-    # Create a TCP/IP socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    #initially, both IP address variables are set to hostname
-    #because the master is the only node in the ring
-    global nextSlaveIP
-    mutex.acquire()
-    nextSlaveIP = myIPaddress = socket.gethostbyname(socket.gethostname())
-    mutex.release()
+	packed_clientIP = -1
+	global nextSlaveIP
+	global nextSlavePort
+	global slaveRID
 
-    #get port number from argv
-    portNum = int(sys.argv[1])
-    # Bind the socket to the port
-    server_address = ('', portNum)
-    print 'Master-handleJoinRequests(): Starting up on port', sys.argv[1]
-    sock.bind(server_address)
-    # Listen for incoming connections
-    sock.listen(1)
+	# Create a TCP socket
+	try:
+		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		    	
+	except socket.error:
+		print 'Master (receiving function): Error - socket creation failure'
+		exit(1) 
+    
+	# Initially, both IP address variables are set to hostname
+	# because the master is the only node in the ring.
+	# Mutex is needed for threading 
+	mutex.acquire()
+	nextSlaveIP = myIPaddress = socket.gethostbyname(socket.gethostname())
+	mutex.release()
+	
+	server_address = ('', portNum)
+	
+	# Attempt to bind the socket to the specified port
+	try: 
+		sock.bind(server_address)
+		
+	except socket.error: 
+		print 'Master (receiving function): Error - socket bind failure'
+		exit(1) 
 
-    while True:
-        # Wait for a connection
-        # print 'Master: Waiting for a connection'
-        connection, slave_address = sock.accept()
-        try:    # Receive the data in small chunks and retransmit it
-            print 'Master-handleJoinRequests(): Received connection from', slave_address[0]
+	print 'Master: Starting up on port', sys.argv[1]
 
-            slave_IP = slave_address[0]
-            slave_Port = slave_address[1]
+	# Listen for incoming connections
+	sock.listen(1)
 
-            data = connection.recv(16)
-            dataCharArray = list(binascii.hexlify(data))
-            #GID_received is the GID of the creator or the slave
-            GID_received = str(dataCharArray[0]) + str(dataCharArray[1])
-            #magic_number is used by the nodes to test the validity of messages using this protocol
-            #ignore the request if the message is not valid (different from 3 bytes or not containing the magic number).
-            received_magic_number = str(dataCharArray[2]) + str(dataCharArray[3]) + str(dataCharArray[4]) + str(dataCharArray[5])
+	# Continuously loop so that any number of Slaves can request to join
+	while True:
+    
+		# Receive and accept a connection
+		connection, slave_address = sock.accept()
+        
+		try:    
+			print 'Master (join function): Received connection from', slave_address[0]
 
-            GID_received = int(GID_received)
-            received_magic_number = int(received_magic_number, 16)
+			slave_IP = slave_address[0]
+			slave_Port = slave_address[1]
 
-            # print 'Master: GID_received =', GID_received
-            # print 'Master: magic_number = 0x%x' % received_magic_number
+			data = connection.recv(16)
+			dataCharArray = list(binascii.hexlify(data))
 
-            if received_magic_number != magic_number:
-                print 'Master-handleJoinRequests(): Error - invalid magic number received from Slave'
-                # exit(1)
+			#GID_received is the GID of the creator or the slave
+			GID_received = str(dataCharArray[0]) + str(dataCharArray[1])
 
-            # Convert nextSlaveIP to integer format for sending
-            packed_nextSlaveIP = struct.unpack("I", socket.inet_aton(nextSlaveIP))[0]
+			#magic_number is used by the nodes to test the validity of messages using this protocol
+			#ignore the request if the message is not valid (different from 3 bytes or not containing the magic number).
+			received_magic_number = str(dataCharArray[2]) + str(dataCharArray[3]) + str(dataCharArray[4]) + str(dataCharArray[5])
 
-            # Send the response packet
-            reply = struct.pack("!BHBI", myGID, magic_number, slaveRID, packed_nextSlaveIP)
+			GID_received = int(GID_received)
+			received_magic_number = int(received_magic_number, 16)
 
-            nextSlaveIP = slave_IP      # Next slave is the slave that just joined
-            slaveRID = slaveRID + 1     # Increment slaveRID for the next slave
+			# print 'Master: GID_received =', GID_received
+			# print 'Master: magic_number = 0x%x' % received_magic_number
 
-            if reply:
-                print 'Master-handleJoinRequests(): Sending response back to Slave'
-                connection.sendall(reply)
-                # print 'Master: Sent %s bytes back to %s' % (len(reply), client_IP)
+			if received_magic_number != magic_number:
+				print 'Master (join function): Error - invalid magic number received from Slave'
+				# exit(1)
 
-        finally:
-            # Clean up the connection
-            connection.close()
+			# Convert nextSlaveIP to integer format for sending
+			packed_nextSlaveIP = struct.unpack("I", socket.inet_aton(nextSlaveIP))[0]
 
-#get user input and send it
-#loop until receive input then send it out to nextSlaveIP.
+			# Send the response packet
+			reply = struct.pack("!BHBI", myGID, magic_number, slaveRID, packed_nextSlaveIP)
+
+			mutex.acquire()
+			nextSlaveIP = slave_IP      # The next slave in the ring is the slave that just joined
+			nextSlavePort = slave_Port
+			slaveRID = slaveRID + 1     # Increment slaveRID for the next slave
+			mutex.release()
+
+			if reply:
+				print 'Master (join function): Sending response back to Slave'
+				connection.sendall(reply)
+
+		finally:
+			# Close the connection to the slave.
+			# It's no longer needed since the slave has already joined 
+			connection.close()
+
+
+# Receive packets from the slave "behind" the Master on the ring. Display the message in
+# in the packet if this node is the intended destination. Otherwise, forward it to the 
+# next node on the ring
 def receivePacketAndForward():
-    #create global UDP socket
-    global socket_receiveAndForward
-    # Bind the socket to the port
-    server_address = ('', portNum)
-    print "server_address", server_address
-    socket_receiveAndForward.bind(server_address)
 
-    #loop until a message is received, then send it to nextSlaveIP
-    while True:
-        #Wait for a packet to arrive via UDP
-        print ("Master- receiveandForward: Calling recvfrom()...")
-        data, address = socket_receiveAndForward.recvfrom(1024)
-        print "Master: Address:\n", address
-        print "Master: Data from packet:\n", data
-        dataCharArray = list(binascii.hexlify(data))
-        #Unpack the packet
-        GID_received = str(dataCharArray[0]) + str(dataCharArray[1])
-        #ignore the request if the message is not valid (different from 3 bytes or not containing the magic number).
-        received_magic_number = str(dataCharArray[2]) + str(dataCharArray[3]) + str(dataCharArray[4]) + str(dataCharArray[5])
-        TTL = str(dataCharArray[6]) + str(dataCharArray[7])
-        RID_dest = str(dataCharArray[8]) + str(dataCharArray[9])
-        RID_src = str(dataCharArray[10]) + str(dataCharArray[11])
-        #TODO: store up to 64 bytes for the message, then 1 byte checksum
+	# Continuously receive messages and handle them accordingly 
+	while True:
 
-        if myRID == RID_dest:
-            print (message) #not defined yet
-        else:
-            self.send(packet) #not defined yet
+		# Begin to receive data. This function will block until data arrives. Note
+		# that 1024 is the size of the buffer in bytes 
+		data, sourceAddress = socket_UDP.recvfrom(1024)
+		dataCharArray = list(binascii.hexlify(data))
+		print 'Master - ', data
 
-#listen for a packet and possibly sending it
-#When a message is received, it must check the destination ring ID.
-#If the RID is 0, the thread should display the message.
-#If not, then the packet should be sent to nextSlaveIP.
-def sendUserMessage(packet):
-    #check the RID by unpacking the packet
+		#
+		#
+		#	BEGIN: This needs work!
+		#
+		#	(See some of previous function's code for hints)
+		#
+		#
 
-    #Send the new packet
-    send(packet)
+		# Unpack the received data
+		GID_received = str(dataCharArray[0]) + str(dataCharArray[1])
+		received_magic_number = str(dataCharArray[2]) + str(dataCharArray[3]) + str(dataCharArray[4]) + str(dataCharArray[5])
+		TTL = str(dataCharArray[6]) + str(dataCharArray[7])
+		destination_RID = str(dataCharArray[8]) + str(dataCharArray[9])
+		RID_src = str(dataCharArray[10]) + str(dataCharArray[11])
 
-def send(packet):
-    socket_send
-    if (nextSlaveIP == previousNextSlaveIP):
-        socket_receiveAndForward.sendto(packet, nextSlaveIP)
-    elif (previousNextSlaveIP == 0):
-        #Make a new UDP socket using nextSlaveIP
-        socket_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        #Send “Packet” using the new socket
-        sent = socket_send.sendto(packet, nextSlaveIP)
+		#
+		#
+		#	END: This needs work! 
+		#
+		#
 
-    else:
-        #Close the old UDP socket
-        socket_receiveAndForward.close()
-        #Make a new UDP socket using nextSlaveIP
-        #this socket does not have to be gloabl
-        socket_send_to_nodes = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        #Send “Packet” using the new socket
-        socket_send_to_nodes.sendto(packet, nextSlaveIP)
-    previousNextSlaveIP = nextSlaveIP
+		# If the packet's destination was this node, then display the packet's message
+		if myRID == destination_RID:
+			print 'Master (receiving function): Received message - ', message
+            
+		# Otherwise, forward the packet onward
+		else:
+			mutex.acquire()
+			socket_UDP.sendto(data, (nextSlaveIP, (10010 + (myGID * 5) + slaveRID)))
+			mutex.release()
 
 
+# Allow the user to send a message to a specified node
+def sendUserMessage():
+
+	# Continuously prompt the user for data to send
+	while True:
+	
+		print 'Master: Messages can now be sent along the ring'
+		destination_RID = raw_input('Master: Enter the Ring ID of a node to send a message to: ')
+		message = raw_input('Master: Enter a message to send: ')
+	
+		#
+		#
+		# NEED TO PACK VARIOUS INFORMATION INTO PACKET HERE 
+		#
+		# Note: Name the packet variable "packet" 
+		#
+		#
+	
+		# Send the message to the next node on the ring
+		mutex.acquire()
+		socket_UDP.sendto(message, (nextSlaveIP, (10010 + (myGID * 5) + (slaveRID - 1))))
+		mutex.release()
+
+
+# Create a UDP socket for sending and receiving data at
+try:
+	socket_UDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+		
+except socket.error:
+	print 'Master (main function): Error - socket creation failure'
+	exit(1) 
+    	
+myAddress = ('', (10010 + (myGID * 5) + myRID))
+	
+# Attempt to bind the socket to the appropriate port
+try:
+	socket_UDP.bind(myAddress)
+	
+except socket.error:
+	print 'Master (main function): Error - socket bind failure'
+	exit(1)
+		
 thread_handleJoinRequests = Thread(name='handleJoinRequests', target=handleJoinRequests)
 thread_receivePacketAndForward = Thread(name='receivePacketAndForward', target=receivePacketAndForward)
-thread_sendUserMessage = threading.Thread(name='sendUserMessage', target=sendUserMessage)
+thread_sendUserMessage = Thread(name='sendUserMessage', target=sendUserMessage)
 
+# Start the threads
 thread_handleJoinRequests.start()
+time.sleep(1)	# Wait for the thread to set up
 thread_receivePacketAndForward.start()
+time.sleep(1)	# Wait for the thread to set up
 thread_sendUserMessage.start()
