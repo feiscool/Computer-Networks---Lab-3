@@ -123,7 +123,6 @@ def receivePacketAndForward():
 		# that 1024 is the size of the buffer in bytes 
 		data, sourceAddress = socket_UDP.recvfrom(1024)
 		dataCharArray = list(binascii.hexlify(data))
-		print 'Master - ', data
 
 		#
 		#
@@ -177,7 +176,7 @@ def sendUserMessage():
 	
 		# Send the message to the next node on the ring
 		mutex.acquire()
-		socket_UDP.sendto(message, (nextSlaveIP, (10010 + (myGID * 5) + (slaveRID - 1))))
+		socket_UDP.sendto(packet, (nextSlaveIP, (10010 + (myGID * 5) + (slaveRID - 1))))
 		mutex.release()
 
 
