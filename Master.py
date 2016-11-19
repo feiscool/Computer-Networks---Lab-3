@@ -178,9 +178,9 @@ def sendUserMessage():
             packet = packet = struct.pack("!BhBBBpB" + charlength + "c", 0, GID, 0x1234, TTL, destination_RID, 0, message, checksum)
 
             # Send the message to the next node on the ring
-            #mutex.acquire()
+            mutex.acquire()
             socket_UDP.sendto(packet, (nextSlaveIP, (10010 + (myGID * 5) + (slaveRID - 1))))
-            #mutex.release()
+            mutex.release()
 
 
 # Create a UDP socket for sending and receiving data at
