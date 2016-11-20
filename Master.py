@@ -24,7 +24,7 @@ def compute_checksum(buf):
     chksum = 0
     pointer = 0
     for element in buf:
-        chksum += int(element, 16)
+        chksum += int(binascii.hexlify(element), 16)
         chksum = (chksum >> 8) + (chksum & 0xff)
     chksum += (chksum >> 8)
     return (~chksum) & 0xff
@@ -132,14 +132,14 @@ def receivePacketAndForward():
 		# that 1024 is the size of the buffer in bytes
         data, sourceAddress = socket_UDP.recvfrom(1024)
         dataCharArray = list(binascii.hexlify(data))
-
-        print("MESSAGE RECIEVED")
-        checksumArr = list()
-        for i in range (len(dataCharArray) - 2):
-            checksumArr[i] = dataCharArray[i]
-        incomingCalcChecksum = compute_checksum(list(binascii.hexlify(checksumArr)))
+        incomingPacket = ""
+        maxrange = len(dataCharArray) - 2
+        for i in range(maxrange):
+            incomingPacket += str(dataCharArray[i])
+        incomingCalcChecksum = compute_checksum(incomingPacket)
+        packetChecksum = int(dataCharArray[len(dataCharArray) - 2] + dataCharArray[len(dataCharArray) - 1], 16)
         #if (incomingCalcChecksum == int(dataCharArray[len(dataCharArray)]-1)):
-        if(incomingCalcChecksum == dataCharArray[len(dataCharArray) - 1]):
+        if(incomingCalcChecksum == packetChecksum):
 		    # Unpack the received data
             GID_received = int(str(dataCharArray[0]) + str(dataCharArray[1]))
             received_magic_number = int(str(dataCharArray[2]) + str(dataCharArray[3]) + str(dataCharArray[4]) + str(dataCharArray[5]))
@@ -152,7 +152,7 @@ def receivePacketAndForward():
                 message = ""
                 for i in range(12, len(dataCharArray) - 2):
                     message += str(dataCharArray[i])
-                print 'Master (receiving function): Received message - ', message
+                print '\nMaster (receiving function): Received message - ', binascii.unhexlify(message)
 
 		    # Otherwise, forward the packet onward
             else:
@@ -160,27 +160,26 @@ def receivePacketAndForward():
                 socket_UDP.sendto(data, (nextSlaveIP, (10010 + (myGID * 5) + slaveRID)))
                 mutex.release()
 
-
 # Allow the user to send a message to a specified node
 def sendUserMessage():
 
 	# Continuously prompt the user for data to send
 	while True:
 
-		print 'Master: Messages can now be sent along the ring'
-		destination_RID = raw_input('Master: Enter the Ring ID of a node to send a message to: ')
-		message = raw_input('Master: Enter a message to send: ')
-        if sys.getsizeof(message) > 64:
-            print 'Master: Message is too long to be sent.'
-        else:
-            packet = struct.pack("!BhBBBp" + charlength + "c", 0, GID, 0x1234, TTL, destination_RID, 0, message)
-            checksum = compute_checksum(list(packet))
-            packet = packet = struct.pack("!BhBBBpB" + charlength + "c", 0, GID, 0x1234, TTL, destination_RID, 0, message, checksum)
+            print 'Master: Messages can now be sent along the ring'
+            destination_RID = raw_input('Master: Enter the Ring ID of a node to send a message to: ')
+            message = raw_input('Master: Enter a message to send: ')
 
-            # Send the message to the next node on the ring
-            mutex.acquire()
-            socket_UDP.sendto(packet, (nextSlaveIP, (10010 + (myGID * 5) + (slaveRID - 1))))
-            mutex.release()
+            if sys.getsizeof(message) > 64:
+                print 'Master: Message is too long to be sent.'
+            else:
+                packet = struct.pack("!BhBBB" + str(len(message)) + "s", int(myGID), int(0x1234), int(TTL), int(destination_RID), myRID, message)
+                checksum = compute_checksum(list(binascii.hexlify(packet)))
+                packet = struct.pack("!BhBBB" + str(len(message))  + "sB", int(myGID), int(0x1234), int(TTL), int(destination_RID), myRID, message, checksum)
+                # Send the message to the next node on the ring
+                mutex.acquire()
+                socket_UDP.sendto(packet, (nextSlaveIP, (10010 + (myGID * 5) + (slaveRID - 1))))
+                mutex.release()
 
 
 # Create a UDP socket for sending and receiving data at
